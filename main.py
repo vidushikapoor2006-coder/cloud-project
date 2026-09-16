@@ -516,11 +516,17 @@ for workload in system.workloads:
 
 
 timeline = create_timeline()
-
 time_series = []
 
 
 for step in timeline:
+
+    # Update eVTOL position for mobility-aware edge selection
+    system.evtol_position = min(step.time * 0.125, 10.0)
+    print(
+    f"t={step.time:02d} | "
+    f"eVTOL Position={system.evtol_position:.2f} km"
+    )
 
     scenario_function = SCENARIO_FUNCTIONS[
         step.scenario
@@ -638,18 +644,19 @@ for record in time_series:
 
 print("\n\n===== ADAPTATION TRANSITIONS =====")
 
-previous_actions = {}
-
-
-for workload in system.workloads:
-
-    previous_actions[workload.name] = (
-        workload.current_location.value,
-        workload.current_mode.value
+previous_actions = {
+    workload.name: (
+        Location.ONBOARD.value,
+        ExecutionMode.FULL.value
     )
+    for workload in system.workloads
+}
 
 
 for step in timeline:
+
+    # Update eVTOL position for mobility-aware edge selection.
+    system.evtol_position = min(step.time * 0.125, 10.0)
 
     scenario_function = SCENARIO_FUNCTIONS[
         step.scenario

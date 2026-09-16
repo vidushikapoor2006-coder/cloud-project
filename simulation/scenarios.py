@@ -1,5 +1,15 @@
 from models.mission import MissionPhase
-
+EDGE_POSITIONS = {
+    "Edge1": 0.0,   # km
+    "Edge2": 10.0   # km
+}
+def get_edge_distances(evtol_position):
+    return {
+        "Edge1": abs(evtol_position - EDGE_POSITIONS["Edge1"]),
+        "Edge2": abs(evtol_position - EDGE_POSITIONS["Edge2"])
+    }
+def get_edge_latency(base_latency, distance):
+    return base_latency + (distance * 5)
 
 def normal_conditions(system):
     """

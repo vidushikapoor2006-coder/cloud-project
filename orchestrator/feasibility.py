@@ -186,7 +186,20 @@ def estimate_latency(
         return compute_latency
 
     # Remote execution
-    network_latency = system.network.latency
+    base_latency = system.network.latency
+
+    # Mobility-aware latency for Edge 1 and Edge 2
+    if location.value == "Edge_1":
+        distance = abs(system.evtol_position - 0.0)
+        network_latency = base_latency + (distance * 5)
+
+    elif location.value == "Edge_2":
+        distance = abs(system.evtol_position - 10.0)
+        network_latency = base_latency + (distance * 5)
+
+    else:
+        # Cloud keeps the existing network latency
+        network_latency = base_latency
 
     return compute_latency + network_latency
 

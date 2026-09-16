@@ -115,39 +115,34 @@ def select_qos_based_action(
     if not candidates:
         return None
 
-    service_levels = [
-        ExecutionMode.FULL,
-        ExecutionMode.REDUCED,
-        ExecutionMode.FALLBACK,
+    # QoS baseline: choose the action with the best QoS
+    # among all feasible NON-SUSPENDED actions.
+    #
+    # This baseline does not use mission utility, mission phase,
+    # or workload criticality. It may therefore sacrifice service
+    # quality when doing so improves network QoS.
+    non_suspended = [
+        candidate
+        for candidate in candidates
+        if candidate[2] != ExecutionMode.SUSPENDED
     ]
 
-    for service_level in service_levels:
+    if non_suspended:
+        best_score, best_location, best_mode = min(
+            non_suspended,
+            key=lambda x: x[0]
+        )
 
-        level_candidates = [
-            candidate
-            for candidate in candidates
-            if candidate[2] == service_level
-        ]
+        allocate(
+            workload,
+            best_location,
+            best_mode,
+            allocations
+        )
 
-        if level_candidates:
+        return best_location, best_mode
 
-            level_candidates.sort(
-                key=lambda x: x[0]
-            )
-
-            best_score, best_location, best_mode = (
-                level_candidates[0]
-            )
-
-            allocate(
-                workload,
-                best_location,
-                best_mode,
-                allocations
-            )
-
-            return best_location, best_mode
-
+    # Suspend only when no executable action is feasible.
     suspended_candidates = [
         candidate
         for candidate in candidates
@@ -155,13 +150,9 @@ def select_qos_based_action(
     ]
 
     if suspended_candidates:
-
-        suspended_candidates.sort(
+        best_score, best_location, best_mode = min(
+            suspended_candidates,
             key=lambda x: x[0]
-        )
-
-        best_score, best_location, best_mode = (
-            suspended_candidates[0]
         )
 
         allocate(

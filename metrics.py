@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from models.workload import Criticality
 
 
 @dataclass
@@ -43,7 +44,7 @@ def calculate_scenario_metrics(
                 if w.name == decision["workload"]
             )
 
-            if workload.criticality.value >= 4:
+            if workload.criticality == Criticality.VERY_HIGH:
                 metrics.critical_workloads_total += 1
 
             continue
@@ -60,7 +61,7 @@ def calculate_scenario_metrics(
         metrics.total_utility += decision["details"]["utility"]
 
         # Critical workload tracking
-        if workload.criticality.value >= 4:
+        if workload.criticality == Criticality.VERY_HIGH:
 
             metrics.critical_workloads_total += 1
 

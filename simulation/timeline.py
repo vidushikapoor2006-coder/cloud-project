@@ -1,5 +1,7 @@
 from dataclasses import dataclass
 
+def get_evtol_position(step):
+    return min(step * 0.125, 10.0)
 
 @dataclass
 class SimulationStep:

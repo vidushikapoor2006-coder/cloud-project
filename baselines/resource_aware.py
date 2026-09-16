@@ -156,50 +156,34 @@ def select_resource_aware_action(
     if not candidates:
         return None
 
-    # --------------------------------------------------
-    # Prefer the highest feasible service level.
-    # --------------------------------------------------
-
-    service_levels = [
-        ExecutionMode.FULL,
-        ExecutionMode.REDUCED,
-        ExecutionMode.FALLBACK,
+    # Resource-aware baseline: minimize resource/energy/latency
+    # cost across all feasible NON-SUSPENDED actions.
+    #
+    # This baseline does not use mission utility, mission phase,
+    # or workload criticality, so it can choose Reduced/Fallback
+    # when those modes are cheaper.
+    non_suspended = [
+        candidate
+        for candidate in candidates
+        if candidate[2] != ExecutionMode.SUSPENDED
     ]
 
-    for service_level in service_levels:
+    if non_suspended:
+        best_score, best_location, best_mode = min(
+            non_suspended,
+            key=lambda x: x[0]
+        )
 
-        level_candidates = [
-            candidate
-            for candidate in candidates
-            if candidate[2] == service_level
-        ]
+        allocate(
+            workload,
+            best_location,
+            best_mode,
+            allocations
+        )
 
-        if level_candidates:
+        return best_location, best_mode
 
-            # Within the selected service level,
-            # minimize latency/energy/resource cost.
-            level_candidates.sort(
-                key=lambda x: x[0]
-            )
-
-            best_score, best_location, best_mode = (
-                level_candidates[0]
-            )
-
-            allocate(
-                workload,
-                best_location,
-                best_mode,
-                allocations
-            )
-
-            return best_location, best_mode
-
-    # --------------------------------------------------
-    # Suspension is used only when no non-suspended
-    # service level is feasible.
-    # --------------------------------------------------
-
+    # Suspend only when no executable action is feasible.
     suspended_candidates = [
         candidate
         for candidate in candidates
@@ -207,13 +191,9 @@ def select_resource_aware_action(
     ]
 
     if suspended_candidates:
-
-        suspended_candidates.sort(
+        best_score, best_location, best_mode = min(
+            suspended_candidates,
             key=lambda x: x[0]
-        )
-
-        best_score, best_location, best_mode = (
-            suspended_candidates[0]
         )
 
         allocate(

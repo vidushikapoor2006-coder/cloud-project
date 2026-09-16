@@ -8,6 +8,7 @@ from models.mission import MissionState, NetworkState
 
 @dataclass
 class SystemState:
+
     mission: MissionState
     onboard: ResourceState
     edge_1: ResourceState
@@ -15,3 +16,4 @@ class SystemState:
     cloud: ResourceState
     network: NetworkState
     workloads: List[Workload]
+    evtol_position: float = 0.0
