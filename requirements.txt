@@ -1,0 +1,3 @@
+# The simulator and all experiments use only the Python standard library (Python 3.12+).
+# This package is needed only for the AWS IoT prototype (main.py, aws_test.py, execution/aws_iot_client.py).
+AWSIoTPythonSDK>=1.5.0

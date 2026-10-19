@@ -13,6 +13,15 @@ env/
 .env.*
 !.env.example
 
+# AWS IoT certificates and private keys -- NEVER commit these
+execution/certs/
+certs/
+*.pem
+*.key
+*.crt
+*.cert
+*.p12
+
 # IDE
 .vscode/
 
