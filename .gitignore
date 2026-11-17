@@ -13,15 +13,6 @@ env/
 .env.*
 !.env.example
 
-# AWS IoT certificates and private keys -- NEVER commit these
-execution/certs/
-certs/
-*.pem
-*.key
-*.crt
-*.cert
-*.p12
-
 # IDE
 .vscode/
 
@@ -31,3 +22,14 @@ Thumbs.db
 
 # Generated experiment output
 *.log
+# AWS IoT credentials (never commit)
+execution/certs/*.pem
+execution/certs/*.crt
+execution/certs/*.key
+
+*.pem
+*.crt
+*.key
+.pytest_cache/
+__pycache__/
+.DS_Store

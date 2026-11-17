@@ -1,427 +1,375 @@
-# Mission-Aware Adaptive Workload Orchestration for Cloud–Edge Computing in Urban Air Mobility
+# Mission-Aware Adaptive Workload Orchestration for Resilient Cloud–Edge Computing in Urban Air Mobility
 
-Simulation framework and AWS proof-of-concept accompanying the paper
-**"Mission-Aware Adaptive Workload Orchestration for Resilient Cloud–Edge Computing in Urban Air Mobility"**
-(H. Kumawat, V. Kapoor, P. Gothwal — Vellore Institute of Technology).
+Simulator, orchestration policies, baselines, experiment pipeline and AWS proof-of-concept accompanying the paper of the same title.
 
-An eVTOL aircraft must run several software workloads in flight (obstacle detection, navigation,
-weather analysis, video analytics, flight logging) while its compute and network conditions keep
-changing. This repository implements a lightweight runtime policy that decides, at every decision step:
+The code places the computing workloads of an eVTOL (electric vertical take-off and landing) aircraft on onboard, edge or cloud resources. It also chooses a service mode for each workload (Full, Reduced, Fallback or Suspended) as the mission phase, network conditions and resource availability change.
 
-1. **where** each workload runs: onboard, Edge 1, Edge 2, or the cloud, and
-2. **at what service level**: Full, Reduced, Fallback, or Suspended,
-
-using the current **mission phase**, the **criticality** of each workload, resource and network
-state, and the **cost of migrating** a workload between edge nodes as the aircraft moves.
-
-The policy is compared with four baselines (Static, QoS-Based, Resource-Aware, Utility-Based) on an
-80-step simulation covering eight operating scenarios. A separate prototype streams the
-orchestration decisions to AWS (IoT Core → Lambda → DynamoDB, monitored with CloudWatch).
+> **Scope.** All results come from a seeded, synthetic simulation. The AWS integration shows that orchestration decisions can be sent, processed, stored and monitored. It does not run the flight workloads on AWS, and it says nothing about safety certification or operational flight readiness.
 
 ---
 
 ## Contents
 
-- [Quick start](#quick-start)
-- [What each script does](#what-each-script-does)
-- [Results](#results)
-- [System model](#system-model)
-- [The proposed policy](#the-proposed-policy)
-- [Baselines](#baselines)
-- [Repository structure](#repository-structure)
-- [AWS prototype](#aws-prototype)
-- [Metric definitions and limitations](#metric-definitions-and-limitations)
-- [Citation](#citation)
+1. [Overview](#1-overview)
+2. [Main results](#2-main-results)
+3. [Installation](#3-installation)
+4. [Running the code](#4-running-the-code)
+5. [Repository structure](#5-repository-structure)
+6. [AWS proof-of-concept](#6-aws-proof-of-concept)
+7. [Response to reviewers](#7-response-to-reviewers)
+8. [Modelling assumptions and limitations](#8-modelling-assumptions-and-limitations)
+9. [Screenshots](#9-screenshots)
+10. [Citation](#10-citation)
 
 ---
 
-## Quick start
-
-**Requirements:** Python **3.12 or newer** (tested on 3.12.3). The simulator and all experiments use
-only the standard library, so there is nothing to install to reproduce the results.
-`AWSIoTPythonSDK` is needed only for the AWS prototype (`pip install -r requirements.txt`).
-
-```bash
-git clone https://github.com/vidushikapoor2006-coder/cloud-project.git
-cd cloud-project
-
-# Reproduces the paper's main comparison (Tables I and II). No AWS needed, runs in about a second.
-python comparison.py
-```
-
-Run all commands from the repository root, since modules are imported as `models.*`,
-`orchestrator.*`, `simulation.*` and `baselines.*`.
-
----
-
-## What each script does
-
-| Command | What it runs | Needs AWS | Paper |
-|---|---|:---:|---|
-| `python comparison.py` | **Main experiment.** Runs all five policies on the same 80-step timeline and prints overall, per-scenario, feasibility and improvement tables | No | Sec. VI–VII, Tables I–II |
-| `python mobility_handover.py` | Isolates Edge 1 → Edge 2 handover as the aircraft moves 0 → 10 km, showing when migration benefit exceeds migration cost | No | Sec. III-B, IV |
-| `python -c "from robustness_evaluation import run_robustness_evaluation; run_robustness_evaluation()"` | Supplementary: 30 paired randomized trials (fixed seed `20260909`) comparing Static, Resource-Aware and Proposed; reports mean ± std. Takes a few seconds | No | Supplementary |
-| `python main.py` | Step-by-step walkthrough of the proposed policy (feasible actions, scores, per-scenario decisions, adaptation history, timeline) and publishes decisions to AWS IoT Core | **Yes** | Sec. V |
-| `python aws_test.py` | Publishes one test mission message to AWS IoT Core | **Yes** | Sec. V |
-
-`main.py` connects to AWS IoT unconditionally, so run `comparison.py` if you do not have the
-AWS certificates (see [AWS prototype](#aws-prototype)).
-
-### Expected output of `python comparison.py` (final table)
-
-```
-Policy                              Utility       Feasible     Infeasible     Feasibility %     Critical %
---------------------------------------------------------------------------------------------------------------
-Static                             19000.00            280            120            70.00%        100.00%
-QoS-Based                          21500.00            360             40            90.00%         87.50%
-Resource-Aware                     21500.00            360             40            90.00%         87.50%
-Utility-Based                      21500.00            360             40            90.00%         87.50%
-Proposed                           21850.00            370             30            92.50%         93.75%
-
-Mission utility improvement vs Static: 15.00%
-Mission utility improvement vs QoS-Based / Resource-Aware / Utility-Based: 1.63%
-Infeasibility reduction vs Static: 75.00%
-Infeasibility reduction vs QoS-Based / Resource-Aware / Utility-Based: 25.00%
-```
-
-![Output of comparison.py](docs/images/comparison_output.png)
-
----
-
-## Results
-
-### Deterministic 80-step comparison (paper Tables I and II)
-
-80 decision steps × 5 workloads = 400 workload decisions per policy.
-
-| Policy | Utility | Feasible | Infeasible | Critical (%) | Migrations | Fallbacks | Suspensions |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| Static | 19000 | 280 | 120 | 100.00 | 0 | 0 | 0 |
-| QoS-Based | 21500 | 360 | 40 | 87.50 | 18 | 4 | 1 |
-| Resource-Aware | 21500 | 360 | 40 | 87.50 | 15 | 4 | 1 |
-| Utility-Based | 21500 | 360 | 40 | 87.50 | 18 | 4 | 1 |
-| **Proposed** | **21850** | **370** | **30** | 93.75 | 16 | 6 | 0 |
-
-Per-scenario mission utility:
-
-| Scenario | Static | QoS / Resource / Utility | Proposed |
-|---|---:|---:|---:|
-| Normal | 3400 | 3400 | 3400 |
-| Network Degradation | 2200 | 2525 | 2525 |
-| Edge Overload | 3400 | 3400 | 3400 |
-| Cloud Failure | 2000 | 3400 | 3400 |
-| Resource Pressure | 1900 | 1900 | **2450** |
-| Emergency Mission | 2700 | 2700 | 2500 |
-| Severe Degradation | 0 | 775 | 775 |
-| Recovery | 3400 | 3400 | 3400 |
-
-The Proposed policy's advantage comes entirely from the **Resource Pressure** scenario. There the
-baselines let Obstacle Detection take the scarce onboard capacity in Full mode and leave
-Navigation with no feasible action, whereas the Proposed policy jointly degrades both critical
-workloads (Obstacle Detection to Fallback, Navigation to Reduced) so that both keep running. In
-**Emergency Mission** it scores 200 below the baselines: it keeps Video Analytics onboard in
-Reduced mode, whereas the baselines move it back to the cloud in Full mode. The proposed policy
-charges for that migration and the baselines do not. The three adaptive baselines produce identical
-utility and feasibility because they all start from the highest feasible service tier; they differ
-in *where* they place workloads, which is why their migration counts differ (see paper, Sec. VII).
-
-### Supplementary: randomized robustness evaluation (30 paired trials, mean ± std)
-
-Each trial applies ±10% random variation to resource usage, network conditions and energy, ±5% to
-workload requirements, plus 5% chances of an intermittent disconnect or cloud failure. All three
-policies see the identical perturbed state at every step.
-
-| Metric | Static | Resource-Aware | Proposed |
-|---|---:|---:|---:|
-| Mission utility | 17707 ± 609 | 20890 ± 273 | 20940 ± 387 |
-| Feasibility rate (%) | 64.18 ± 2.13 | 89.17 ± 0.86 | 89.28 ± 1.59 |
-| Critical workload preservation (%) | 79.04 ± 3.47 | 89.02 ± 1.97 | 92.19 ± 1.65 |
-| Total migrations | 0 | 48.6 ± 10.4 | 33.9 ± 7.0 |
-
-Under perturbation the Proposed policy's utility and feasibility are statistically close to
-Resource-Aware (+0.24% utility, within one standard deviation). Its measurable differences are
-higher critical-workload preservation and substantially fewer migrations. Note that this
-experiment counts a critical workload as preserved only when its action is actually feasible, which
-differs from the Table I definition (see [Metric definitions](#metric-definitions-and-limitations)).
-
-![Output of the robustness evaluation](docs/images/robustness_output.png)
-
-### Edge handover (`mobility_handover.py`)
-
-Edge 1 sits at 0 km and Edge 2 at 10 km. Edge latency grows by 5 ms per km of distance. The
-workload stays on Edge 1 until the benefit of moving exceeds the analytical migration cost, then
-hands over near the Edge 2 position:
-
-```
-  0.0 km | Edge_1  | Full | Score=  51.00 | Migration=No  | Cost= 0.00 | Benefit= 0.00
-  ...
-  9.0 km | Edge_1  | Full | Score=  46.50 | Migration=No  | Cost= 0.00 | Benefit= 0.00
- 10.0 km | Edge_2  | Full | Score=  46.50 | Migration=Yes | Cost= 4.50 | Benefit= 5.00
-```
-
-![Output of mobility_handover.py](docs/images/mobility_handover_output.png)
-
----
-
-## System model
-
-**Execution locations:** `Onboard`, `Edge_1`, `Edge_2`, `AWS_Cloud`.
-**Service modes:** `Full`, `Reduced` (50% of compute/memory/energy), `Fallback` (20%), `Suspended` (0%).
-**Mission phases:** Takeoff, Cruise, Approach, Landing, Emergency.
+## 1. Overview
 
 ### Workloads
 
-| Workload | Criticality | Deadline (ms) | CPU | Memory | Energy | Network | Allowed locations |
-|---|---|---:|---:|---:|---:|---:|---|
-| Obstacle Detection | VERY_HIGH | 50 | 30 | 20 | 15 | 10 | Onboard, Edge 1, Edge 2 (Fallback onboard only); never suspended |
-| Navigation | VERY_HIGH | 50 | 35 | 25 | 15 | 10 | Same as above; never suspended |
-| Weather Analysis | HIGH | 200 | 20 | 15 | 8 | 20 | Edges, Cloud; Fallback onboard; may be suspended |
-| Video Analytics | MEDIUM | 150 | 30 | 20 | 10 | 30 | Edges, Cloud (Reduced also onboard); may be suspended |
-| Flight Logging | LOW | 500 | 10 | 10 | 3 | 5 | Edges, Cloud; Fallback onboard; may be suspended |
+| Workload | Criticality | Deadline | Allowed hosts |
+|---|---|---:|---|
+| Obstacle Detection | Very high | 50 ms | Onboard only |
+| Navigation | Very high | 50 ms | Onboard only |
+| Weather Analysis | High | 200 ms | Onboard, Edge 1, Edge 2, Cloud |
+| Video Analytics | Medium | 150 ms | Onboard, Edge 1, Edge 2, Cloud |
+| Flight Logging | Low | 500 ms | Onboard, Edge 1, Edge 2, Cloud |
 
-### Resources and network (Normal conditions)
+The two flight-critical workloads run **only onboard**, under every policy. If no onboard mode is feasible, the workload is reported as *infeasible*. It is never offloaded or suspended.
 
-| Resource | CPU capacity / used | Memory capacity / used |
+### Proposed policy
+
+The proposed policy decides in two phases at every step:
+
+1. **Critical admission.** Obstacle Detection and Navigation are admitted jointly onboard. The policy maximises, in order: the number of critical workloads served, their utility, the lowest service quality among them, and then lower cost.
+2. **Non-critical placement.** The remaining workloads are handled in order of their mission-phase importance. For each one, the policy picks a host and service mode by utility, using operating cost minus migration cost as the tie-breaker.
+
+A placement is feasible only if it satisfies the resource limits, link availability and edge coverage (8 km radius) and meets the deadline. Response time accounts for packet loss.
+
+### Scenarios
+
+The simulation runs an 80-step mission through eight scenarios: Normal, Network Degradation, Edge Overload, Cloud Failure, Resource Pressure, Emergency Mission, Severe Degradation and Recovery. Within each scenario, latency, bandwidth, packet loss, background load, energy, demand, edge contention, connectivity, cloud failure/recovery and aircraft mobility all vary over time. This variation is generated from fixed random seeds (ramps, Ornstein–Uhlenbeck noise, a Gilbert–Elliott link model and AR(1) demand). These are modelled dynamics, not measured traces.
+
+### Compared methods
+
+| Name in paper | Identifier in code / CSV | Description |
 |---|---|---|
-| Onboard | 100 / 20 | 100 / 20 |
-| Edge 1 | 100 / 30 | 100 / 25 |
-| Edge 2 | 100 / 40 | 100 / 30 |
-| Cloud | 200 / 50 | 200 / 40 |
+| Static | `Static` | Fixed onboard allocation |
+| QoS-Based, Resource-Aware, Utility-Based | same | Original adaptive baselines |
+| AMC-inspired | `AMC-Adapted` | Adaptation of Adaptive Mixed-Criticality principles |
+| EMC-inspired | `Elastic-MC` | Adaptation of Elastic Mixed-Criticality principles |
+| MDP-Migration | `MDP-Migration` | Adaptation of MDP-based service migration (Wang et al., IEEE/ACM ToN 2019) |
+| RH-DP / RH-DP-Oracle | same | Five-step receding-horizon dynamic programming reference (top-4 candidate pruning) |
+| Proposed-v1 | `Proposed-v1` | Policy as originally submitted |
+| **Proposed** | `Proposed` | Revised policy (Algorithm 1 in the paper) |
 
-Network: 50 ms latency, 100 bandwidth, 1% packet loss, connected.
-
-### The 80-step timeline (10 steps per scenario)
-
-| Steps | Scenario | What changes |
-|---|---|---|
-| 0–9 | Normal | Baseline conditions |
-| 10–19 | Network Degradation | 300 ms latency, bandwidth 40, 20% packet loss |
-| 20–29 | Edge Overload | Edge 1 at 95/90, Edge 2 at 90/85 (CPU/memory used) |
-| 30–39 | Cloud Failure | Cloud unavailable |
-| 40–49 | Resource Pressure | Onboard 70/70 and energy 45; edges 80/75 and 85/80; cloud 75/70; 180 ms, bandwidth 60, 10% loss |
-| 50–59 | Emergency Mission | Mission phase switches to Emergency (utilities re-weighted) |
-| 60–69 | Severe Degradation | Onboard 90/90 and energy 25; edges 95/90; cloud down; 400 ms, bandwidth 20, 30% loss, **disconnected** |
-| 70–79 | Recovery | Back to normal conditions |
-
-**Mobility:** the eVTOL position advances 0.125 km per step (capped at 10 km). Edge latency is
-`network_latency + 5 ms × distance_to_edge`.
+The mixed-criticality and MDP baselines adapt the published principles to this setting; they are not exact reimplementations. RH-DP prunes candidates and scalarises its objective, so it is a strong reference, not an exact optimum.
 
 ---
 
-## The proposed policy
+## 2. Main results
 
-Implemented in `orchestrator/decision.py` (`select_actions_globally`). At each step:
+30 trials with shared seeds (base seed `20260909`). Values are means; ± is the 95% confidence interval.
 
-**1. Hard feasibility (`orchestrator/feasibility.py`).** An action `(location, mode)` is considered
-only if the resource has enough CPU, memory and energy; the network is connected with enough
-bandwidth (remote locations only); the estimated latency meets the workload deadline; and the mode
-is allowed for that workload (critical workloads can never be suspended).
+| Policy | Utility delivered | Critical execution success | Critical non-suspension | Completion | Deadline-miss ratio | Migrations |
+|---|---:|---:|---:|---:|---:|---:|
+| Static | 17,595 ± 133 | 78.1% | 100.0% | 64.1% | 35.9% | 0.0 |
+| QoS-Based | 20,423 ± 132 | 90.6% | 92.4% | 83.4% | 4.6% | 37.1 |
+| Resource-Aware | 20,425 ± 132 | 90.6% | 92.4% | 83.4% | 4.6% | 34.3 |
+| Utility-Based | 20,423 ± 132 | 90.6% | 92.4% | 83.4% | 4.6% | 37.1 |
+| AMC-inspired | 19,601 ± 131 | 94.4% | 95.9% | 71.7% | 2.2% | 14.2 |
+| EMC-inspired | 20,737 ± 110 | 94.4% | 95.9% | 86.0% | 4.4% | 38.5 |
+| MDP-Migration | 20,418 ± 130 | 90.6% | 92.4% | 83.4% | 4.6% | 28.7 |
+| Proposed-v1 | 20,168 ± 154 | 93.9% | 95.9% | 83.3% | 4.6% | 20.1 |
+| RH-DP | 20,726 ± 109 | 93.9% | 95.9% | 84.6% | 4.6% | 31.4 |
+| **Proposed** | **20,711 ± 109** | **93.9%** | **95.9%** | **84.5%** | **4.7%** | **29.2** |
 
-**2. Scoring (`orchestrator/utility.py`).**
+Paired Wilcoxon signed-rank tests with Holm correction show:
 
-```
-Score = Utility − LatencyCost − EnergyCost − ResourceCost − MigrationCost
+* **Proposed delivers more utility than** Static, QoS-Based, Resource-Aware, Utility-Based, AMC-inspired, MDP-Migration and Proposed-v1 (all adjusted p < 0.001).
+* **Proposed and EMC-inspired are statistically tied on utility** (difference −26, adjusted p = 0.135). The proposed policy reaches this with fewer migrations (29.2 vs 38.5).
+* **RH-DP is slightly ahead** (+16 utility points, about 0.1%) but needs about 28× the decision time. In the runtime benchmark, the proposed policy averages 353 µs per decision (95th percentile 647 µs) and RH-DP averages about 9.8 ms.
+* **Critical execution success and critical non-suspension are different measures.** Static never suspends a critical workload (100% non-suspension), but its fixed onboard allocation often cannot actually run them (78.1% execution success).
 
-Utility       = MissionImportance(workload, phase) × Quality(workload, mode)
-LatencyCost   = (estimated_latency / deadline) × 20
-EnergyCost    = energy_requirement × mode_factor
-ResourceCost  = (cpu_required / cpu_capacity) × 20
-```
-
-**3. Migration cost (`calculate_migration_cost`; details in
-[`README_MIGRATION_COST.md`](README_MIGRATION_COST.md)).** Changing location is a soft cost, not a hard constraint:
-
-```
-T_mig = (state_size / bandwidth) × 1000 + path_latency + 5 ms
-C_mig = (T_mig / deadline) × 20
-```
-
-A migration is accepted only if the operating-score improvement exceeds `C_mig`, or if the current
-placement has become infeasible (recovery). Initial placement is never charged.
-
-**4. Two-phase allocation.**
-- **Phase 1 – critical workloads (Obstacle Detection, Navigation)** are chosen *jointly* by
-  exhaustive search over their feasible action combinations. Ranking is lexicographic: maximize
-  total utility, then the minimum quality across the critical workloads, then minimize cost.
-  Critical workloads are never intentionally suspended.
-- **Phase 2 – remaining workloads**, in descending criticality, take the leftover resources,
-  maximizing mission utility first and using the score only as a tie-breaker.
-
-**5. Adaptation tracking (`orchestrator/history.py`).** Each decision is classified as
-Migration, Degradation, Fallback, Suspension, Recovery, or a combination.
+The ablation, sensitivity and runtime results are in the paper. The data behind them is in `results/ablation`, `results/sensitivity` and `results/runtime`.
 
 ---
 
-## Baselines
+## 3. Installation
 
-All baselines use the same workloads, scenarios, hard feasibility rules and per-step resource
-accounting as the proposed policy, so differences come only from the decision rule.
+Requires Python 3.12 or later (tested with 3.13 and 3.14).
 
-| Policy | File | Decision rule |
-|---|---|---|
-| Static | `baselines/static_baseline.py` | Fixed placement: critical workloads onboard, all others in the cloud, always Full mode; never adapts |
-| QoS-Based | `baselines/qos_based.py` | Highest feasible service tier, then minimize `0.50·latency + 0.25·bandwidth_penalty + 0.25·packet_loss` |
-| Resource-Aware | `baselines/resource_aware.py` | Highest feasible service tier, then minimize `0.40·latency + 0.30·energy + 0.30·resource_use` |
-| Utility-Based | `baselines/utility_based.py` | Maximize mission utility per workload, ties broken by lower latency; no joint critical-workload protection |
-| **Proposed** | `orchestrator/decision.py` | Mission-aware, criticality-first joint selection with migration-cost gating (above) |
+```bash
+git clone <repository-url>
+cd <repository-folder>
+python3 -m venv .venv
+source .venv/bin/activate          # Windows PowerShell: .venv\Scripts\Activate.ps1
+python3 -m pip install -r requirements.txt
+```
+
+The AWS SDK is needed only for the optional AWS integration:
+
+```bash
+python3 -m pip install AWSIoTPythonSDK
+```
 
 ---
 
-## Repository structure
+## 4. Running the code
 
-```
-.
-├── comparison.py               # Main experiment: five-policy comparison (paper Tables I-II)
-├── robustness_evaluation.py    # Supplementary: 30 paired randomized trials
-├── mobility_handover.py        # Edge 1 -> Edge 2 handover experiment
-├── main.py                     # Walkthrough of the proposed policy + AWS IoT publishing
-├── aws_test.py                 # Publishes a single test message to AWS IoT Core
-├── metrics.py                  # Per-scenario metrics used by main.py
-├── evaluation.py               # Aggregation helpers for a 3-policy evaluation
-├── README_MIGRATION_COST.md    # Migration cost model
-├── requirements.txt
-│
-├── aws/
-│   └── lambda_handler.py       # Lambda: records each IoT message in DynamoDB
-├── docs/
-│   └── images/                 # Screenshots used in this README
-│
-├── models/                     # Data model
-│   ├── workload.py             #   Workload, Criticality, ExecutionMode, Location
-│   ├── resource.py             #   ResourceState (CPU, memory, energy, availability)
-│   ├── mission.py              #   MissionPhase, MissionState, NetworkState
-│   └── state.py                #   SystemState (the S_t tuple of the paper)
-│
-├── orchestrator/               # Proposed policy
-│   ├── decision.py             #   Joint critical selection, migration cost, two-phase allocation
-│   ├── feasibility.py          #   Action space and hard constraints (Eq. 8)
-│   ├── utility.py              #   Utility, cost terms, score (Eqs. 6, 9)
-│   ├── resource_manager.py     #   Per-step resource accounting across workloads
-│   ├── runtime.py              #   Workload runtime state updates
-│   └── history.py              #   Adaptation classification and event log
-│
-├── baselines/                  # Comparison policies
-│   ├── static_baseline.py, static_runner.py
-│   ├── qos_based.py
-│   ├── resource_aware.py, resource_runner.py
-│   └── utility_based.py
-│
-├── simulation/                 # Experiment definition
-│   ├── scenarios.py            #   The eight scenarios
-│   ├── timeline.py             #   The 80-step timeline
-│   └── records.py              #   TimeStepRecord
-│
-└── execution/                  # AWS prototype and execution stubs
-    ├── aws_iot_client.py       #   MQTT client for AWS IoT Core
-    ├── cloud_executor.py       #   Simulated cloud execution stub
-    ├── local_executor.py       #   Simulated onboard execution stub
-    └── certs/                  #   AWS IoT certificates (NOT committed; see below)
+### Tests
+
+```bash
+python3 -m pytest -v tests/
 ```
 
-**Notes.** `comparison.py` contains its own policy runners that also count adaptations and
-migrations, and it produces the numbers in the paper. `baselines/static_runner.py` and
-`baselines/resource_runner.py` are simpler runners used by `main.py`, and they do not track
-adaptations. `evaluation.py`, `cloud_executor.py` and `local_executor.py` are not called by the
-entry scripts above.
+The 34 tests cover the onboard-only safety rule, feasibility, migration cost, utility, phase-aware ordering, the mixed-criticality and MDP baselines, the look-ahead reference, ablation variants and reproducibility.
 
----
+### Reproduce every result in the paper
 
-## AWS prototype
-
-The prototype shows how the orchestrator's decisions could be streamed to a cloud back end. As in
-the paper, the Python simulator makes **all** orchestration decisions; AWS provides communication,
-storage and monitoring and does **not** execute the eVTOL workloads.
-
-```
-Python eVTOL simulator ──MQTT (TLS, port 8883)──► AWS IoT Core ──IoT rule──► AWS Lambda ──► DynamoDB
-                                                                                │
-                                                                                └──► CloudWatch (logs, metrics)
+```bash
+./run_all.sh
 ```
 
-- **Topic:** `evtol/mission`, QoS 1, client ID `eVTOL-001`
-- **Region:** `ap-south-1` (Mumbai)
-- **Message format** (`execution/aws_iot_client.py → publish_mission`):
+This runs all experiments and regenerates every table, figure and number reported in the paper from the raw logs. It takes about 15 minutes on two CPU cores.
 
-  ```json
-  {
-    "mission_id": "mission-010-Navigation",
-    "workload": "Navigation",
-    "mode": "Full",
-    "mission_phase": "Cruise",
-    "location": "Onboard"
-  }
-  ```
+### Individual experiments
 
-- **What `main.py` publishes:** the initial placement at `t = 0` plus every step where a workload
-  actually adapts, rather than all 400 decisions.
+```bash
+python3 -m experiments.run_experiments --trials 30 --tag main      # main study
+python3 -m experiments.run_experiments --legacy --tag legacy       # original deterministic timeline
+python3 -m experiments.run_experiments --ablation --tag ablation   # component ablation
+python3 -m experiments.analyze --tag main                          # CIs, Wilcoxon + Holm
+python3 -m experiments.sensitivity --trials 30                     # parameter sweeps
+python3 -m experiments.benchmark_runtime                           # decision-time benchmark
+python3 -m experiments.make_tables
+python3 -m experiments.make_figures
+```
 
-### Reproducing the prototype
+Options for `run_experiments`:
 
-1. **Create an AWS IoT *Thing*** with a certificate and a policy that allows
-   `iot:Connect`, `iot:Publish` (on `evtol/mission`). Download the device certificate, private
-   key and Amazon Root CA 1.
-2. **Place the three files in `execution/certs/`** and set `ENDPOINT` and the certificate file
-   names at the top of `execution/aws_iot_client.py` to match your account.
-3. **Create a DynamoDB table** named `MissionOrchestration` with `mission_id` (String) as the
-   partition key.
-4. **Create the Lambda function** (Python runtime) from [`aws/lambda_handler.py`](aws/lambda_handler.py)
-   and give its execution role `dynamodb:PutItem` on that table. The handler records the placement
-   the simulator chose; it does not decide or execute anything. Lambda logs go to CloudWatch
-   automatically.
-5. **Add an IoT rule** with the query `SELECT * FROM 'evtol/mission'` and an action that invokes
-   the Lambda function.
-6. **Install the SDK and send a test message:**
-
-   ```bash
-   pip install -r requirements.txt
-   python aws_test.py
-   ```
-
-   Then run `python main.py` for the full timeline.
-
-> **Security:** `execution/certs/` holds a private key and must never be committed. The provided
-> `.gitignore` excludes `certs/`, `*.pem`, `*.key` and `*.crt`.
-
-### Screenshots
-
-| AWS IoT Core (MQTT test client, topic `evtol/mission`) | DynamoDB (`MissionOrchestration` table) |
+| Option | Effect |
 |---|---|
-| ![IoT Core message received](docs/images/aws_iot_console.png) | ![DynamoDB items](docs/images/dynamodb_items.png) |
+| `--noise <value>` | Scale of stochastic variation (0 reproduces the original deterministic timeline) |
+| `--profile flight\|cruise_only` | Mission-phase profile |
+| `--coverage <km>\|none` | Edge coverage radius |
+| `--policies "Proposed,Elastic-MC"` | Restrict the run to selected policies |
+| `--network-trace <file.csv>` | Replace synthetic network conditions with a trace (`t,latency_ms,bandwidth,loss_pct,connected`) |
+
+**Reproducibility.** Trial seeds are derived from `config.BASE_SEED` with `numpy.random.SeedSequence`. Each run saves its seeds, library versions and a snapshot of `config.py` to `results/<tag>/manifest.json`. All policies in a trial run on the same pre-generated trace. Reported decision time covers only the policy's decision call; simulation, logging and AWS publishing are excluded.
+
+### Original demonstration scripts
+
+```bash
+python3 main.py              # scenario walk-through with placements and adaptation history
+python3 comparison.py        # original five-policy comparison on the deterministic timeline
+```
+
+These scripts are kept from the original submission. `comparison.py` reports the original "critical preservation" metric on a single deterministic run. The 30-trial results in [Section 2](#2-main-results) replace it.
 
 ---
 
-## Metric definitions and limitations
+## 5. Repository structure
 
-**Critical Workload Preservation (CWPR).** Two definitions are used, and they are not interchangeable:
-
-- *`comparison.py` / paper Table I:* the share of Obstacle Detection and Navigation decisions that
-  were kept in an executable mode (Full, Reduced or Fallback) rather than deliberately suspended or
-  left without an action. Static scores 100% because it never changes its fixed onboard
-  assignment, even when that assignment is infeasible. The metric therefore measures *not being
-  sacrificed*, not *being served successfully*. The paper discusses this in Sec. VII.
-- *`robustness_evaluation.py`:* the share of critical decisions whose chosen action is actually
-  feasible under the perturbed conditions. This is why Static scores 79%, not 100%, there.
-
-**Other limitations.**
-
-- Everything is a simulation. Migration time is **analytical** (state size, bandwidth, latency,
-  fixed overhead), not a measured state transfer, and it does not model aircraft communication energy.
-- Migration cost is modelled only in the proposed policy. The baselines never compute it, so the
-  "Total Migration Cost" row printed for them in `comparison.py` is 0.00 because it is not modelled,
-  not because their migrations are free.
-- Mobility is one-dimensional with two edge nodes at fixed positions (0 km and 10 km).
-- The scenario timeline is deterministic. The randomized robustness evaluation is the only
-  stochastic experiment and is not part of the paper's reported results.
-- Edge-to-edge handover cost assumes a fixed 20 ms path latency and a 1 MB workload state.
+| Path | Content |
+|---|---|
+| `config.py` | Every simulation parameter, with its units and source. The paper's parameter tables are generated from this file. |
+| `models/` | Workload, resource, mission and system-state classes |
+| `orchestrator/feasibility.py` | Hard constraints shared by all policies: onboard-only rule, resources, link and coverage, packet-loss-aware latency, deadlines |
+| `orchestrator/utility.py` | Utility and cost terms |
+| `orchestrator/migration.py` | Analytical migration time and cost |
+| `orchestrator/decision.py` | Revised proposed policy (Algorithm 1) |
+| `orchestrator/decision_v1.py` | Policy as originally submitted |
+| `orchestrator/lookahead.py` | RH-DP and RH-DP-Oracle |
+| `baselines/` | Static, QoS-Based, Resource-Aware, Utility-Based, mixed-criticality-inspired and MDP-Migration baselines |
+| `policies.py` | Common interface and registry of all policies and ablation variants |
+| `simulation/` | Environment dynamics, scenario timeline and execution engine |
+| `metrics.py` | Scenario and episode metrics |
+| `experiments/` | Experiment runner, statistics, sensitivity, runtime benchmark, table/figure generation, AWS latency probe |
+| `results/` | Raw logs, manifests and aggregated results for every experiment in the paper |
+| `generated/`, `figures/` | LaTeX tables, result macros and figures used in the paper |
+| `tests/` | Automated tests |
+| `execution/` | AWS IoT Core MQTT client and executors |
+| `main.py`, `comparison.py`, `evaluation.py`, `robustness_evaluation.py`, `mobility_handover.py` | Original scripts |
 
 ---
 
-## Citation
+## 6. AWS proof-of-concept
 
-```
-H. Kumawat, V. Kapoor, and P. Gothwal, "Mission-Aware Adaptive Workload Orchestration for
-Resilient Cloud–Edge Computing in Urban Air Mobility," Vellore Institute of Technology, Vellore,
-India. Manuscript.
+### Architecture
+
+```mermaid
+flowchart LR
+    A["Python simulator<br/>(makes all orchestration decisions)"] -- "MQTT: evtol/mission" --> B["AWS IoT Core"]
+    B -- "IoT rule" --> C["AWS Lambda<br/>(processes and stores each decision)"]
+    C --> D[("Amazon DynamoDB")]
+    C --> E["Amazon CloudWatch Logs"]
 ```
 
-Code: <https://github.com/vidushikapoor2006-coder/cloud-project>
+All placement and service-mode decisions are made in the Python simulator. AWS receives them, processes and stores them, and makes them observable. The deployment uses the `ap-south-1` region and these resources:
+
+| Component | Name |
+|---|---|
+| MQTT client ID | `eVTOL-001` |
+| MQTT topic | `evtol/mission` |
+| IoT rule | `eVTOLMissionToLambda` |
+| Lambda function | `mission-aware-cloud-processor` |
+| DynamoDB table | `MissionOrchestration` |
+
+The AWS resources are created in the AWS account; this repository does not provision them.
+
+### Running it
+
+Set the connection details through environment variables. No certificates or keys are included in this repository.
+
+```bash
+export AWS_IOT_ENDPOINT="<your-endpoint>-ats.iot.<region>.amazonaws.com"
+export AWS_IOT_CLIENT_ID="eVTOL-001"
+export AWS_IOT_TOPIC="evtol/mission"
+export AWS_IOT_ROOT_CA="/path/to/AmazonRootCA1.pem"
+export AWS_IOT_CERT="/path/to/device-certificate.pem.crt"
+export AWS_IOT_PRIVATE_KEY="/path/to/private.pem.key"
+
+python3 aws_test.py          # publish a single test message
+python3 main.py --aws        # publish the initial placement and every subsequent adaptation
+```
+
+With `--aws`, MQTT publish time is reported separately from decision time.
+
+### Message format
+
+```json
+{
+  "mission_id": "mission-050-Video-Analytics",
+  "workload": "Video Analytics",
+  "mode": "Full",
+  "mission_phase": "CRUISE",
+  "location": "Edge_1"
+}
+```
+
+The Lambda function stores each event under a newly generated UUID (the table's `mission_id` partition key). The original identifier is kept in `source_mission_id`, so repeated events for the same workload never overwrite each other.
+
+### Observed behaviour
+
+In the recorded run, CloudWatch logged the receipt and storage of each decision. For the example event `mission-050-Video-Analytics`, the logs show 20.3 ms of processing inside the function and a billed Lambda duration of 41.3 ms. That is a single observation. End-to-end AWS latency was not measured for the paper. `experiments/aws_latency_probe.py` is provided for measuring it, but its results are not part of the reported evaluation.
+
+---
+
+## 7. Response to reviewers
+
+This section summarises how the revision addresses each reviewer comment. The full point-by-point response accompanies the revised manuscript.
+
+### Reviewer 2
+
+| Comment | Revision |
+|---|---|
+| Clarify novelty relative to mixed-criticality scheduling and existing placement/migration work | The novelty claim is narrowed. Degradation, offloading, placement and migration are each acknowledged as established techniques. The contribution is framed as their integration: mission-phase importance, joint host and service-mode selection for non-critical workloads, mobility-dependent migration cost, and onboard-only admission for flight-critical workloads. |
+| Compare against established methods from the literature | Added AMC-inspired, EMC-inspired and MDP-Migration baselines, plus the RH-DP look-ahead reference. They are described as adaptations of published principles. |
+| Provide a parameter table with descriptions, values and formulae | Table I lists workload parameters and phase-dependent importance and quality. Table II lists simulation parameters with values, units and sources. Equations (4)–(8) define utility, response time, resource constraints, migration cost and the operating score. All values come from `config.py`. |
+| Support the "lightweight" claim | Added pseudocode (Algorithm 1), candidate counts, worst-case time and memory complexity, and measured decision times (353 µs per decision on average). The claim applies only to the general-purpose machine used for the measurements. |
+| Compare the greedy policy with dynamic programming / look-ahead, since mission phases are known | Added the five-step RH-DP reference and an oracle variant. RH-DP gains about 0.1% utility at about 28× the decision time, so the one-step policy is retained. |
+| The simulation is static, with flat utility in each scenario | The environment now varies within each scenario (network, load, energy, demand, contention, connectivity, cloud failure, mobility). Results are reported over 30 seeded trials. |
+| The proposed policy scores lower than the baselines in the Emergency scenario | Fixed the migration gate and added phase-dependent ordering of non-critical workloads. The proposed policy now matches the best baselines in Emergency; it is not claimed to exceed them. |
+| Static reports 100% critical preservation despite poor utility | The paper now reports critical non-suspension and critical execution success separately (Section 2 above). |
+| Flight-critical tasks should stay onboard | Obstacle Detection and Navigation are restricted to onboard execution for every policy and checked by automated tests. |
+| Redundant figures | Each remaining figure has its own role (topology, AWS architecture, utility over time). The redundant comparison matrix was removed. |
+| Unclear wording | The manuscript was rewritten in more direct technical language, with precise definitions of placement, degradation, fallback, migration and suspension. |
+
+### Reviewer 4
+
+| Comment | Revision |
+|---|---|
+| Explain the mathematical formulation more clearly | Sections III–IV define the state, action space, onboard-only constraint, utility, response-time and resource constraints, migration cost, the lexicographic objectives and the two-phase algorithm. The notation matches the code. |
+| Add repeated simulations and more metrics | 30 shared-seed trials with 95% confidence intervals and paired Wilcoxon tests with Holm correction. Metrics include utility, critical execution success, non-suspension, deadline misses, completion, infeasibility, migrations, migration overhead, energy, utilisation and decision time. |
+| Validate under realistic operating conditions | The simulator now models stochastic, time-varying network and resource conditions, mobility, edge contention, intermittent connectivity and delayed cloud recovery. A real network trace can be supplied with `--network-trace`. No operational trace or hardware-in-the-loop experiment is included; the paper states this limitation. |
+
+### Reviewer 6
+
+| Comment | Revision |
+|---|---|
+| Define acronyms (eVTOL, UAV, QoS, ...) | All acronyms are defined at first use in the abstract and the main text. |
+| Standardise mathematical writing and punctuation | Equations and the surrounding text were revised for consistent notation and punctuation. |
+| Discuss the figures in the text | The text now explains the AWS architecture figure along the data path, and the utility-over-time figure, including within-scenario variation and the scenarios where policies differ. |
+
+---
+
+## 8. Modelling assumptions and limitations
+
+* All environment dynamics are synthetic. Parameters marked "this rev." in `config.py` are modelling assumptions, not measurements, and the sensitivity analysis varies them.
+* Reduced and Fallback are abstract service modes, modelled as a resource scale and a quality factor. No degraded algorithms are implemented.
+* Migration is modelled analytically. The default treats it as live migration, with downtime as a soft cost (`MIGRATION_DOWNTIME_IN_DEADLINE=True` gives the cold-migration variant). Migration energy is not modelled.
+* Packet loss inflates network delay by a factor of 1/(1−p), with p capped at 0.95.
+* Edge and cloud energy budgets are constant. The onboard energy budget varies over the mission.
+* The mixed-criticality and MDP baselines adapt published principles; they are not exact reimplementations.
+* Neither trace-driven operational validation nor hardware-in-the-loop testing is claimed.
+* The AWS integration covers decision transport, processing, storage and monitoring, not workload execution.
+
+---
+
+## 9. Screenshots
+
+### Repository structure
+
+<p>
+<img src="images/01-structure-1.png" width="24%" alt="Repository structure, part 1">
+<img src="images/02-structure-2.png" width="24%" alt="Repository structure, part 2">
+<img src="images/03-structure-3.png" width="24%" alt="Repository structure, part 3">
+<img src="images/04-structure-4.png" width="24%" alt="Repository structure, part 4">
+</p>
+
+### Automated tests
+
+All 34 tests pass.
+
+![Test results](images/08-tests.png)
+
+### Simulation run (`main.py --aws`)
+
+The run prints the workload catalogue, the available resources and the feasible actions for each workload. Obstacle Detection and Navigation have onboard options only.
+
+![main.py run with AWS publishing](images/09-main-aws-run.png)
+
+### Adaptation history
+
+The run shows initial placement, migration, fallback, degradation, suspension and recovery across the eight scenarios. Obstacle Detection and Navigation stay onboard throughout.
+
+![Adaptation transitions](images/10-adaptation-transitions.png)
+
+### Original five-policy script (`comparison.py`)
+
+This is the comparison script from the original submission. It runs a single deterministic timeline and reports the original "critical preservation" metric (non-suspension). The 30-trial results in [Section 2](#2-main-results) replace it.
+
+![Overall results](images/05-comparison-overall.png)
+
+![Scenario-level results](images/06-comparison-scenarios.png)
+
+![Improvement summary](images/07-comparison-improvement.png)
+
+### AWS: CloudWatch log streams
+
+Log streams of the `mission-aware-cloud-processor` Lambda function.
+
+![CloudWatch log streams](images/11-cloudwatch-log-streams.png)
+
+### AWS: Lambda log events
+
+A decision (`mission-050-Video-Analytics`) is received, stored under a generated UUID and logged with its processing time.
+
+![Lambda log events](images/12-lambda-log-events.png)
+
+### AWS: DynamoDB records
+
+The `MissionOrchestration` table. Rows keyed by a UUID were written by the current version. Rows keyed by a readable mission name, such as `mission-040-...`, as well as `mission-001` and `integration-test-001`, come from earlier development and connectivity tests, before the onboard-only rule and UUID keys were introduced. They do not reflect the current policy.
+
+![DynamoDB records](images/13-dynamodb-items.png)
+
+---
+
+## 10. Citation
+
+If you use this code, please cite the accompanying paper:
+
+> *Mission-Aware Adaptive Workload Orchestration for Resilient Cloud–Edge Computing in Urban Air Mobility.*
+
+Full bibliographic details will be added once the paper is published.

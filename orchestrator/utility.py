@@ -1,6 +1,7 @@
 from models.workload import Workload, ExecutionMode
 from models.mission import MissionPhase
-from orchestrator.feasibility import estimate_latency
+import config
+from orchestrator.feasibility import estimate_latency, get_resource_for_location
 
 
 # Quality retained by each execution mode
@@ -87,6 +88,7 @@ MISSION_IMPORTANCE = {
 
 
 def calculate_utility(workload, mode, mission_phase):
+    """U_i = B_i(M_t) * q_i(Q_i)  (Eq. (6))."""
     base_utility = MISSION_IMPORTANCE[
         workload.name
     ][mission_phase]
@@ -99,6 +101,7 @@ def calculate_utility(workload, mode, mission_phase):
 
 
 def calculate_latency_cost(workload, location, mode, system):
+    """C^lat = lambda_lat * T_i(a) / D_i  (Eq. (16))."""
     if mode == ExecutionMode.SUSPENDED:
         return 0
 
@@ -112,54 +115,31 @@ def calculate_latency_cost(workload, location, mode, system):
     # Normalize latency against workload deadline
     normalized_latency = latency / workload.deadline
 
-    return normalized_latency * 20
+    return normalized_latency * config.LATENCY_COST_SCALE
 
 
 def calculate_energy_cost(workload, mode):
-    if mode == ExecutionMode.SUSPENDED:
-        return 0
-
-    if mode == ExecutionMode.REDUCED:
-        return workload.energy_requirement * 0.5
-
-    if mode == ExecutionMode.FALLBACK:
-        return workload.energy_requirement * 0.2
-
-    return workload.energy_requirement
+    """C^en = lambda_en * kappa(q) * e_i  (Eq. (17))."""
+    return (config.ENERGY_COST_SCALE
+            * workload.energy_requirement
+            * config.MODE_SCALE[mode.value])
 
 
 def calculate_resource_cost(workload, location, mode, system):
+    """C^res = lambda_res * kappa(q) * c_i / CPU capacity of host  (Eq. (18))."""
     if mode == ExecutionMode.SUSPENDED:
         return 0
 
-    resource = None
-
-    if location.value == "Onboard":
-        resource = system.onboard
-
-    elif location.value == "Edge_1":
-        resource = system.edge_1
-
-    elif location.value == "Edge_2":
-        resource = system.edge_2
-
-    elif location.value == "AWS_Cloud":
-        resource = system.cloud
+    resource = get_resource_for_location(location, system)
 
     if resource is None:
         return 0
 
-    compute = workload.compute_requirement
-
-    if mode == ExecutionMode.REDUCED:
-        compute *= 0.5
-
-    elif mode == ExecutionMode.FALLBACK:
-        compute *= 0.2
+    compute = workload.compute_requirement * config.MODE_SCALE[mode.value]
 
     utilization = compute / resource.cpu_capacity
 
-    return utilization * 20
+    return utilization * config.RESOURCE_COST_SCALE
 
 
 def calculate_score(
@@ -168,6 +148,11 @@ def calculate_score(
     mode,
     system
 ):
+    """Operating score S_i = U_i - C^lat - C^en - C^res  (Eq. (19)).
+
+    The migration cost C^mig is subtracted by the decision layer because it
+    depends on the workload's current placement.
+    """
     utility = calculate_utility(
         workload,
         mode,

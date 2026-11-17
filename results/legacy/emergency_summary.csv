@@ -1,0 +1,12 @@
+policy,utility_delivered,utility_delivered_ci95,crit_exec_success,crit_exec_success_ci95,crit_full_rate,crit_full_rate_ci95,completion_rate,completion_rate_ci95,migrations,migrations_ci95
+Static,2700.0,,1.0,,1.0,,1.0,,0.0,
+QoS-Based,2700.0,,1.0,,1.0,,1.0,,2.0,
+Resource-Aware,2700.0,,1.0,,1.0,,1.0,,2.0,
+Utility-Based,2700.0,,1.0,,1.0,,1.0,,2.0,
+AMC-Adapted,2700.0,,1.0,,1.0,,1.0,,3.0,
+Elastic-MC,2700.0,,1.0,,1.0,,1.0,,2.0,
+MDP-Migration,2700.0,,1.0,,1.0,,1.0,,3.0,
+Proposed-v1,2550.0,,1.0,,1.0,,1.0,,0.0,
+Proposed,2700.0,,1.0,,1.0,,1.0,,1.0,
+RH-DP,2700.0,,1.0,,1.0,,1.0,,2.0,
+RH-DP-Oracle,2700.0,,1.0,,1.0,,1.0,,2.0,

@@ -49,3 +49,18 @@ class Workload:
     previous_location: Location = None
     previous_mode: ExecutionMode = None
     state: WorkloadState = WorkloadState.RUNNING
+
+    # Nominal (declared) demands; compute/energy are scaled at run time by
+    # the dynamic demand factor of the simulator (this revision).
+    nominal_compute: float = None
+    nominal_energy: float = None
+
+    def __post_init__(self):
+        if self.nominal_compute is None:
+            self.nominal_compute = self.compute_requirement
+        if self.nominal_energy is None:
+            self.nominal_energy = self.energy_requirement
+
+    def set_demand_factor(self, factor):
+        self.compute_requirement = self.nominal_compute * factor
+        self.energy_requirement = self.nominal_energy * factor

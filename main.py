@@ -1,4 +1,35 @@
-from execution.aws_iot_client import connect, publish_mission, disconnect
+"""
+Demonstration run of the proposed policy with the original printed reports.
+
+    python main.py          # offline: AWS publishing disabled
+    python main.py --aws    # publish initial placement + adaptations to
+                            # AWS IoT Core (requires credentials, see README)
+
+When --aws is given, the MQTT publish time is measured separately from the
+orchestration decision time and summarised at the end.
+"""
+import sys
+import time
+
+USE_AWS = "--aws" in sys.argv
+AWS_PUBLISH_MS = []
+DECISION_US = []
+
+if USE_AWS:
+    from execution.aws_iot_client import connect, disconnect
+    from execution.aws_iot_client import publish_mission as _aws_publish
+
+    def publish_mission(**kwargs):
+        AWS_PUBLISH_MS.append(_aws_publish(**kwargs))
+else:
+    def connect():
+        print("AWS publishing disabled (run with --aws to enable).")
+
+    def publish_mission(**kwargs):
+        pass
+
+    def disconnect():
+        pass
 from models.workload import (
     Workload,
     Criticality,
@@ -534,7 +565,9 @@ for step in timeline:
 
     scenario_function(system)
 
+    _t0 = time.perf_counter_ns()
     decisions = select_actions_globally(system)
+    DECISION_US.append((time.perf_counter_ns() - _t0) / 1000.0)
 
     # Publish the initial state and every actual adaptation to AWS IoT.
     # This avoids sending all 400 possible workload decisions.
@@ -589,6 +622,12 @@ for step in timeline:
 
 
 disconnect()
+
+print(f"\nOrchestration decision time: mean "
+      f"{sum(DECISION_US) / len(DECISION_US):.1f} us over {len(DECISION_US)} steps")
+if AWS_PUBLISH_MS:
+    print(f"AWS MQTT publish time: mean {sum(AWS_PUBLISH_MS) / len(AWS_PUBLISH_MS):.1f} ms, "
+          f"max {max(AWS_PUBLISH_MS):.1f} ms over {len(AWS_PUBLISH_MS)} messages")
 
 
 # PROPOSED POLICY — DECISION DETAILS

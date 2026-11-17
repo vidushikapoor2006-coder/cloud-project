@@ -1,0 +1,7 @@
+quantity,value
+unrestricted joint action space (|L||Q|)^N,1048576
+original catalogue joint space prod|A_i|,53900
+revised (safety) catalogue joint space prod|A_i|,9900
+catalogue actions screened per step sum|A_i|,37
+Phase-1 combinations enumerated prod(|A_c|+1),16
+Phase-2 single-action evaluations (upper bound),31

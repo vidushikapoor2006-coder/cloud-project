@@ -1,28 +1,16 @@
+"""Cumulative (joint) resource accounting within one decision step (Eq. (12))."""
+
 from models.workload import ExecutionMode
-from orchestrator.feasibility import get_resource_for_location
+from orchestrator.feasibility import (
+    get_resource_for_location,
+    scaled_requirements,
+)
 
 
 def get_resource_requirements(workload, mode):
-    compute = workload.compute_requirement
-    memory = workload.memory_requirement
-    energy = workload.energy_requirement
-
-    if mode == ExecutionMode.REDUCED:
-        compute *= 0.5
-        memory *= 0.5
-        energy *= 0.5
-
-    elif mode == ExecutionMode.FALLBACK:
-        compute *= 0.2
-        memory *= 0.2
-        energy *= 0.2
-
-    elif mode == ExecutionMode.SUSPENDED:
-        compute = 0
-        memory = 0
-        energy = 0
-
-    return compute, memory, energy
+    if mode == ExecutionMode.SUSPENDED:
+        return 0, 0, 0
+    return scaled_requirements(workload, mode)
 
 
 def can_allocate(
@@ -40,45 +28,26 @@ def can_allocate(
     if resource is None:
         return False
 
+    if not resource.available and mode != ExecutionMode.SUSPENDED:
+        return False
+
     compute, memory, energy = get_resource_requirements(
         workload,
         mode
     )
 
-    current_cpu = allocations.get(
-        location,
-        {}
-    ).get("cpu", 0)
+    used = allocations.get(location, {})
 
-    current_memory = allocations.get(
-        location,
-        {}
-    ).get("memory", 0)
-
-    current_energy = allocations.get(
-        location,
-        {}
-    ).get("energy", 0)
-
-    # --------------------------------------------------------
     # CPU constraint
-    # --------------------------------------------------------
-
-    if current_cpu + compute > resource.cpu_available:
+    if used.get("cpu", 0) + compute > resource.cpu_available + 1e-9:
         return False
 
-    # --------------------------------------------------------
     # Memory constraint
-    # --------------------------------------------------------
-
-    if current_memory + memory > resource.memory_available:
+    if used.get("memory", 0) + memory > resource.memory_available + 1e-9:
         return False
 
-    # --------------------------------------------------------
     # Energy constraint
-    # --------------------------------------------------------
-
-    if current_energy + energy > resource.energy_available:
+    if used.get("energy", 0) + energy > resource.energy_available + 1e-9:
         return False
 
     return True

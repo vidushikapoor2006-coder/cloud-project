@@ -1,14 +1,25 @@
-from execution.aws_iot_client import connect, publish_mission, disconnect
+"""Manual AWS IoT connectivity test (requires valid AWS IoT credentials).
+
+Run explicitly with: python aws_test.py
+This module is intentionally safe to import during test discovery.
+"""
 
 
-connect()
+def main():
+    from execution.aws_iot_client import connect, publish_mission, disconnect
 
-publish_mission(
-    mission_id="integration-test-001",
-    workload="Weather Analysis",
-    mode="Full",
-    mission_phase="CRUISE",
-    location="AWS_CLOUD"
-)
+    connect()
+    try:
+        publish_mission(
+            mission_id="integration-test-001",
+            workload="Weather Analysis",
+            mode="Full",
+            mission_phase="CRUISE",
+            location="AWS_CLOUD",
+        )
+    finally:
+        disconnect()
 
-disconnect()
+
+if __name__ == "__main__":
+    main()

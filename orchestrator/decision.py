@@ -1,139 +1,54 @@
+"""
+Mission-aware adaptive orchestration policy (revised; Algorithm 1 of the paper).
+
+The policy solves, at every decision step t, the lexicographic problem of
+Eq. (20) in two phases:
+
+  Phase 1 (flight-critical workloads, jointly):
+      maximise  ( n_served, sum_i U_i, min_i q_i, -sum_i C_i )
+      over all combinations of onboard actions of the critical workloads,
+      subject to the joint resource constraint (Eq. (12)).  A critical
+      workload may be left unserved ONLY if no joint combination can serve
+      it; it is then reported as infeasible (a degraded safety condition),
+      never as suspended and never offloaded.
+
+  Phase 2 (non-critical workloads, one at a time):
+      workloads are visited in decreasing phase-dependent importance
+      B_i(M_t) (ties: static criticality); each selects
+          argmax_a ( U_i(a), S_i(a) - C^mig_i(a) )
+      over feasible actions that fit into the resources left over by the
+      already committed workloads.
+
+Changes with respect to the original submission (kept in decision_v1.py):
+  * The separate migration gate "score gain > C^mig" was removed.  It used a
+    different criterion from the utility-first selection and blocked
+    utility-improving migrations (Emergency-scenario loss).  Migration cost
+    now enters the secondary key: when utility is unchanged, a migration is
+    selected only if its migration-adjusted operating score is better; a
+    migration that raises mission utility is not blocked by its cost.
+  * Phase 2 is ordered by B_i(M_t) rather than static criticality, so
+    emergency-specific priorities are enforced.
+  * Phase 1 includes a "served count" key, which replaces the original
+    cost-only greedy fallback branch.
+  * Optional instrumentation: number of evaluated / feasible combinations.
+"""
+
 from itertools import product
+
+import config
 
 from models.workload import Criticality, ExecutionMode
 
-from orchestrator.feasibility import get_feasible_actions
-from orchestrator.utility import calculate_score, calculate_utility, QUALITY_FACTOR
+from orchestrator.feasibility import (
+    get_feasible_actions, estimate_latency, generate_actions,
+)
+from orchestrator.utility import (
+    calculate_score, calculate_utility, QUALITY_FACTOR, MISSION_IMPORTANCE,
+)
 from orchestrator.resource_manager import can_allocate, allocate
 from orchestrator.runtime import update_workload_state
 from orchestrator.history import classify_adaptation
-
-
-# Migration model parameters for analytical migration overhead.
-MIGRATION_BANDWIDTH_MBPS = 50.0
-EDGE_TO_EDGE_LATENCY_MS = 20.0
-MIGRATION_OVERHEAD_MS = 5.0
-MIGRATION_COST_SCALE = 20.0
-
-
-def calculate_migration_cost(workload, old_location, new_location, system):
-    """Return analytical migration time and normalized migration cost.
-
-    A location change is treated as a soft orchestration cost, not a hard
-    feasibility constraint. The model charges for transferring the workload
-    state plus network/coordination overhead. Initial placement is not charged.
-    """
-    # A workload with no previous runtime placement is an initial placement,
-    # not a migration. Runtime code sets previous_location after the first
-    # committed decision.
-    if (
-        old_location is None
-        or old_location == new_location
-        or getattr(workload, "previous_location", None) is None
-    ):
-        return {"migration_time_ms": 0.0, "migration_cost": 0.0}
-
-    state_size_mb = max(float(getattr(workload, "state_size_mb", 1.0)), 0.0)
-    effective_bandwidth = max(
-        min(MIGRATION_BANDWIDTH_MBPS, float(system.network.bandwidth)),
-        1e-6
-    )
-    transfer_time_ms = (state_size_mb / effective_bandwidth) * 1000.0
-
-    if old_location.value.startswith("Edge_") and new_location.value.startswith("Edge_"):
-        path_latency_ms = EDGE_TO_EDGE_LATENCY_MS
-    else:
-        path_latency_ms = float(system.network.latency)
-
-    migration_time_ms = (
-        transfer_time_ms
-        + path_latency_ms
-        + MIGRATION_OVERHEAD_MS
-    )
-
-    migration_cost = (
-        migration_time_ms / max(workload.deadline, 1.0)
-    ) * MIGRATION_COST_SCALE
-
-    return {
-        "migration_time_ms": migration_time_ms,
-        "migration_cost": migration_cost,
-    }
-
-
-def _migration_allowed(workload, old_location, new_location, candidate_score,
-                       current_score, system):
-    """Permit migration when it is initial placement, recovery, or beneficial."""
-    if (
-        old_location is None
-        or old_location == new_location
-        or getattr(workload, "previous_location", None) is None
-    ):
-        return True
-
-    migration = calculate_migration_cost(
-        workload, old_location, new_location, system
-    )
-
-    # If the current action is not feasible, migration is a recovery action.
-    if current_score is None:
-        return True
-
-    operating_benefit = candidate_score - current_score
-    return operating_benefit > migration["migration_cost"]
-
-
-def _evaluate_action(workload, location, mode, system, allocations):
-    """Evaluate an action including migration overhead and stability cost."""
-    if not can_allocate(
-        workload, location, mode, system, allocations
-    ):
-        return None
-
-    result = calculate_score(
-        workload, location, mode, system
-    )
-
-    old_location = workload.current_location
-    migration = calculate_migration_cost(
-        workload, old_location, location, system
-    )
-
-    current_result = None
-    if old_location is not None:
-        current_mode = workload.current_mode
-        # The current action is a valid reference only when it satisfies the
-        # same hard feasibility rules (resource, connectivity/bandwidth and
-        # deadline) used for candidate actions. If it is no longer feasible,
-        # a location change is treated as recovery and migration is allowed.
-        current_action = (old_location, current_mode)
-        if (
-            current_action in get_feasible_actions(workload, system)
-            and can_allocate(workload, old_location, current_mode, system, {})
-        ):
-            current_result = calculate_score(
-                workload, old_location, current_mode, system
-            )["score"]
-
-    # A change is worthwhile only when the operating-score improvement
-    # exceeds the migration overhead. If the current placement is infeasible,
-    # migration is allowed as recovery.
-    if not _migration_allowed(
-        workload, old_location, location, result["score"],
-        current_result, system
-    ):
-        return None
-
-    result["migration_time_ms"] = migration["migration_time_ms"]
-    result["migration_cost"] = migration["migration_cost"]
-    result["base_score"] = result["score"]
-    result["score"] -= migration["migration_cost"]
-    result["migration_benefit"] = (
-        None if current_result is None
-        else result["base_score"] - current_result
-    )
-
-    return result
+from orchestrator.migration import calculate_migration_cost, is_migration
 
 
 def _critical_workload(workload):
@@ -141,167 +56,128 @@ def _critical_workload(workload):
     return workload.criticality == Criticality.VERY_HIGH
 
 
-def _joint_allocate(critical_workloads, action_combination, system):
-    """Check whether a complete critical-workload action combination fits."""
-    allocations = {}
-
-    for workload, (location, mode) in zip(
-        critical_workloads,
-        action_combination
-    ):
-        if not can_allocate(
-            workload,
-            location,
-            mode,
-            system,
-            allocations
-        ):
-            return None
-
-        allocate(
-            workload,
-            location,
-            mode,
-            allocations
-        )
-
-    return allocations
+def _scored(workload, location, mode, system):
+    """Operating score with migration overhead (S_i - C^mig_i)."""
+    result = calculate_score(workload, location, mode, system)
+    migration = calculate_migration_cost(
+        workload, workload.current_location, location, system
+    )
+    result["migration_time_ms"] = migration["migration_time_ms"]
+    result["migration_cost"] = migration["migration_cost"]
+    result["migrated"] = is_migration(workload, location)
+    result["base_score"] = result["score"]
+    result["score"] = result["score"] - migration["migration_cost"]
+    result["predicted_latency_ms"] = estimate_latency(
+        workload, location, mode, system)
+    return result
 
 
-def _select_critical_actions(critical_workloads, system):
+class _hi_budget:
+    """Temporarily inflate CPU/energy demand to the HI budget (1+delta)c_i."""
+
+    def __init__(self, workload, margin):
+        self.w = workload
+        self.margin = margin
+
+    def __enter__(self):
+        if self.margin:
+            self.c, self.e = (self.w.compute_requirement,
+                              self.w.energy_requirement)
+            self.w.compute_requirement = self.c * (1.0 + self.margin)
+            self.w.energy_requirement = self.e * (1.0 + self.margin)
+        return self
+
+    def __exit__(self, *exc):
+        if self.margin:
+            self.w.compute_requirement, self.w.energy_requirement = \
+                self.c, self.e
+        return False
+
+
+def _select_critical_actions(critical_workloads, system, feasible, stats,
+                             margin=None, allocations_out=None):
+    """Phase 1: joint enumeration over critical onboard actions.
+
+    With margin delta > 0 the critical workloads are admitted (and their
+    capacity reserved) with the pessimistic budget (1 + delta) * c_i.
     """
-    Jointly select actions for mission-critical workloads.
-
-    The objective is lexicographic:
-      1. Preserve critical service (never intentionally suspend a critical workload).
-      2. Maximize aggregate mission utility of critical workloads.
-      3. Maximize the minimum critical-workload quality.
-      4. Minimize the aggregate orchestration cost.
-
-    The critical action space is intentionally small in this prototype, so
-    exhaustive enumeration is used instead of a heavyweight optimizer.
-    """
-    action_lists = []
-
+    margin = config.CRITICAL_DEMAND_MARGIN if margin is None else margin
+    option_lists = []
     for workload in critical_workloads:
-        feasible = [
-            action
-            for action in get_feasible_actions(workload, system)
+        options = [
+            action for action in feasible[workload.name]
             if action[1] != ExecutionMode.SUSPENDED
         ]
-
-        if not feasible:
-            action_lists.append([])
-        else:
-            action_lists.append(feasible)
-
-    if any(not actions for actions in action_lists):
-        return None, {}
+        # None = leave unserved (only chosen if nothing else fits).
+        option_lists.append(options + [None])
 
     best = None
-
-    for combination in product(*action_lists):
-        allocations = _joint_allocate(
-            critical_workloads,
-            combination,
-            system
-        )
-
-        if allocations is None:
-            continue
-
+    for combination in product(*option_lists):
+        stats["phase1_evaluated"] += 1
+        allocations = {}
+        ok = True
+        n_served = 0
         total_utility = 0.0
-        quality_values = []
+        qualities = []
         total_cost = 0.0
         results = []
-
-        for workload, (location, mode) in zip(
-            critical_workloads,
-            combination
-        ):
-            result = calculate_score(
-                workload,
-                location,
-                mode,
-                system
-            )
-
-            old_location = workload.current_location
-            migration = calculate_migration_cost(
-                workload, old_location, location, system
-            )
-
-            current_result = None
-            current_action = (old_location, workload.current_mode)
-            if (
-                old_location is not None
-                and current_action in get_feasible_actions(workload, system)
-                and can_allocate(
-                    workload, old_location, workload.current_mode, system, {}
-                )
-            ):
-                current_result = calculate_score(
-                    workload, old_location, workload.current_mode, system
-                )["score"]
-
-            if not _migration_allowed(
-                workload, old_location, location, result["score"],
-                current_result, system
-            ):
-                results = []
+        for workload, action in zip(critical_workloads, combination):
+            if action is None:
+                results.append(None)
+                continue
+            location, mode = action
+            with _hi_budget(workload, margin):
+                fits = can_allocate(workload, location, mode, system,
+                                    allocations)
+                if fits:
+                    allocate(workload, location, mode, allocations)
+            if not fits:
+                ok = False
                 break
-
-            result["migration_time_ms"] = migration["migration_time_ms"]
-            result["migration_cost"] = migration["migration_cost"]
-            result["base_score"] = result["score"]
-            result["score"] -= migration["migration_cost"]
-            result["migration_benefit"] = (
-                None if current_result is None
-                else result["base_score"] - current_result
-            )
-
-            utility = calculate_utility(
-                workload,
-                mode,
-                system.mission.phase
-            )
-
-            total_utility += utility
-            quality_values.append(
-                QUALITY_FACTOR[workload.name][mode]
-            )
-            total_cost += (
-                result["latency_cost"]
-                + result["energy_cost"]
-                + result["resource_cost"]
-            )
+            result = _scored(workload, location, mode, system)
+            n_served += 1
+            total_utility += result["utility"]
+            qualities.append(QUALITY_FACTOR[workload.name][mode])
+            total_cost += (result["latency_cost"] + result["energy_cost"]
+                           + result["resource_cost"]
+                           + result["migration_cost"])
             results.append(result)
-
-        if not results:
+        if not ok:
             continue
+        stats["phase1_feasible"] += 1
+        key = (n_served, total_utility,
+               min(qualities) if qualities else 0.0, -total_cost)
+        if best is None or key > best["key"]:
+            best = {"key": key, "combination": combination,
+                    "results": results, "allocations": allocations}
+    return best
 
-        min_quality = min(quality_values)
 
-        # Higher utility first; then protect the weakest critical workload;
-        # finally prefer lower cost. Tuple is ordered for max().
-        candidate_key = (
-            total_utility,
-            min_quality,
-            -total_cost
-        )
-
-        if best is None or candidate_key > best["key"]:
-            best = {
-                "key": candidate_key,
-                "combination": combination,
-                "allocations": allocations,
-                "results": results
-            }
-
-    if best is None:
-        return None, {}
-
-    return best, best["allocations"]
+def _sequential_critical(critical_workloads, system, feasible, stats):
+    """Ablation: critical workloads admitted one at a time (no joint search);
+    each takes lexmax (U, S) of what still fits."""
+    allocations, combination, results = {}, [], []
+    for workload in critical_workloads:
+        cands = []
+        for location, mode in feasible[workload.name]:
+            stats["phase1_evaluated"] += 1
+            if mode == ExecutionMode.SUSPENDED or not can_allocate(
+                    workload, location, mode, system, allocations):
+                continue
+            stats["phase1_feasible"] += 1
+            cands.append(((location, mode),
+                          _scored(workload, location, mode, system)))
+        if not cands:
+            combination.append(None)
+            results.append(None)
+            continue
+        action, result = max(cands, key=lambda c: (c[1]["utility"],
+                                                    c[1]["score"]))
+        allocate(workload, action[0], action[1], allocations)
+        combination.append(action)
+        results.append(result)
+    return {"combination": combination, "results": results,
+            "allocations": allocations}
 
 
 def _commit_decision(workload, location, mode, result, allocations, decisions):
@@ -309,29 +185,12 @@ def _commit_decision(workload, location, mode, result, allocations, decisions):
     old_location = workload.current_location
     old_mode = workload.current_mode
 
-    update_workload_state(
-        workload,
-        location,
-        mode
-    )
+    update_workload_state(workload, location, mode)
+    allocate(workload, location, mode, allocations)
 
-    allocate(
-        workload,
-        location,
-        mode,
-        allocations
-    )
-
-    adapted = (
-        old_location != location
-        or old_mode != mode
-    )
-
+    adapted = (old_location != location or old_mode != mode)
     adaptation_type = classify_adaptation(
-        old_location.value,
-        old_mode.value,
-        location.value,
-        mode.value
+        old_location.value, old_mode.value, location.value, mode.value
     )
 
     decisions.append({
@@ -341,7 +200,7 @@ def _commit_decision(workload, location, mode, result, allocations, decisions):
         "score": result["score"],
         "details": result,
         "adaptation_type": adaptation_type,
-        "adapted": adapted
+        "adapted": adapted,
     })
 
 
@@ -351,169 +210,126 @@ def _append_infeasible(workload, decisions):
         "location": None,
         "mode": None,
         "score": None,
-        "adapted": False
+        "adapted": False,
     })
 
 
-def select_actions_globally(system):
-    """
-    Mission-aware adaptive orchestration policy.
+def phase2_order(workloads, mission_phase):
+    """Non-critical visiting order: phase importance, then criticality."""
+    return sorted(
+        workloads,
+        key=lambda w: (MISSION_IMPORTANCE[w.name][mission_phase],
+                       w.criticality.value),
+        reverse=True,
+    )
 
-    Unlike the old purely sequential greedy policy, mission-critical
-    workloads are selected jointly first. This prevents lower-priority
-    workloads from consuming resources that are needed to preserve critical
-    functionality.
 
-    After critical workloads are protected, remaining workloads are selected
-    using the existing utility/cost scoring mechanism.
+ABLATION_DEFAULTS = {
+    "phase_priority": True,    # Phase-2 order by B_i(M_t) (else static criticality)
+    "phase_aware": True,       # decisions use the current phase (else fixed CRUISE weights)
+    "joint_admission": True,   # Phase-1 joint enumeration (else sequential greedy)
+    "migration_cost": True,    # C_mig in the secondary key (else ignored)
+    "degradation": True,       # Reduced/Fallback modes allowed (else Full/Suspended only)
+}
+
+
+def select_actions_globally(system, stats=None, margin=None, ablation=None):
+    """Mission-aware adaptive orchestration policy (Algorithm 1).
+
+    Returns a list of decision records.  If ``stats`` is a dict it is filled
+    with the number of evaluated and feasible combinations.  ``ablation``
+    switches off individual components (component ablation study); the
+    default is the full policy.
     """
+    opts = dict(ABLATION_DEFAULTS, **(ablation or {}))
+    if not opts["phase_aware"]:
+        # Phase-blind variant: decide with fixed cruise importance; the true
+        # phase is restored before the outcome is evaluated.
+        from models.mission import MissionPhase
+        true_phase = system.mission.phase
+        system.mission.phase = MissionPhase.CRUISE
+        try:
+            return select_actions_globally(
+                system, stats, margin, dict(opts, phase_aware=True))
+        finally:
+            system.mission.phase = true_phase
+    if stats is None:
+        stats = {}
+    for key in ("phase1_evaluated", "phase1_feasible",
+                "phase2_evaluated", "phase2_feasible"):
+        stats[key] = 0
+    # Number of catalogue actions screened by the hard-constraint filter.
+    stats["catalogue_actions"] = sum(
+        len(generate_actions(w)) for w in system.workloads
+    )
+
     allocations = {}
     decisions = []
 
-    critical_workloads = [
-        workload
-        for workload in system.workloads
-        if _critical_workload(workload)
-    ]
+    # Feasible action sets, computed once per workload per step (cache).
+    feasible = {
+        w.name: get_feasible_actions(w, system) for w in system.workloads
+    }
+    if not opts["degradation"]:
+        feasible = {n: [a for a in acts if a[1] in (ExecutionMode.FULL,
+                                                     ExecutionMode.SUSPENDED)]
+                    for n, acts in feasible.items()}
 
+    critical_workloads = [w for w in system.workloads if _critical_workload(w)]
     noncritical_workloads = [
-        workload
-        for workload in system.workloads
-        if not _critical_workload(workload)
+        w for w in system.workloads if not _critical_workload(w)
     ]
 
     # ------------------------------------------------------------
     # PHASE 1: Joint protection of mission-critical workloads
     # ------------------------------------------------------------
-    critical_selection, critical_allocations = _select_critical_actions(
-        critical_workloads,
-        system
-    )
-
-    if critical_selection is not None:
-        # Recreate the critical allocation map by committing each action.
-        for workload, (location, mode), result in zip(
-            critical_workloads,
-            critical_selection["combination"],
-            critical_selection["results"]
-        ):
-            _commit_decision(
-                workload,
-                location,
-                mode,
-                result,
-                allocations,
-                decisions
-            )
+    if opts["joint_admission"]:
+        best = _select_critical_actions(critical_workloads, system, feasible,
+                                        stats, margin=margin)
     else:
-        # If no joint feasible critical combination exists, fall back to the
-        # old criticality-ordered greedy mechanism. This represents a true
-        # physical/resource infeasibility rather than sacrificing a critical
-        # workload because a lower-priority workload was allocated first.
-        for workload in sorted(
-            critical_workloads,
-            key=lambda w: w.criticality.value,
-            reverse=True
-        ):
-            feasible_actions = get_feasible_actions(
-                workload,
-                system
-            )
-
-            candidates = []
-
-            for location, mode in feasible_actions:
-                if mode == ExecutionMode.SUSPENDED:
-                    continue
-
-                result = _evaluate_action(
-                    workload,
-                    location,
-                    mode,
-                    system,
-                    allocations
-                )
-
-                if result is not None:
-                    candidates.append((location, mode, result))
-
-            if not candidates:
-                _append_infeasible(workload, decisions)
-                continue
-
-            best = max(
-                candidates,
-                key=lambda x: x[2]["score"]
-            )
-
-            _commit_decision(
-                workload,
-                best[0],
-                best[1],
-                best[2],
-                allocations,
-                decisions
-            )
+        best = _sequential_critical(critical_workloads, system, feasible, stats)
+    for workload, action, result in zip(
+        critical_workloads, best["combination"], best["results"]
+    ):
+        if action is None:
+            _append_infeasible(workload, decisions)
+        else:
+            _commit_decision(workload, action[0], action[1], result,
+                             {}, decisions)
+    # Reserve the (possibly HI-budget) capacity of the critical workloads so
+    # that non-critical workloads cannot consume it.
+    allocations = {k: dict(v) for k, v in best["allocations"].items()}
 
     # ------------------------------------------------------------
     # PHASE 2: Allocate remaining resources to non-critical work
     # ------------------------------------------------------------
-    for workload in sorted(
-        noncritical_workloads,
-        key=lambda w: w.criticality.value,
-        reverse=True
-    ):
-        feasible_actions = get_feasible_actions(
-            workload,
-            system
-        )
-
+    phase = system.mission.phase
+    order = (phase2_order(noncritical_workloads, phase) if opts["phase_priority"]
+             else sorted(noncritical_workloads,
+                         key=lambda w: w.criticality.value, reverse=True))
+    for workload in order:
         candidates = []
-
-        for location, mode in feasible_actions:
-            result = _evaluate_action(
-                workload,
-                location,
-                mode,
-                system,
-                allocations
-            )
-
-            if result is None:
+        for location, mode in feasible[workload.name]:
+            stats["phase2_evaluated"] += 1
+            if not can_allocate(workload, location, mode, system, allocations):
                 continue
-
+            stats["phase2_feasible"] += 1
+            result = _scored(workload, location, mode, system)
+            if not opts["migration_cost"]:
+                result["score"] = result["base_score"]
             candidates.append((location, mode, result))
 
         if not candidates:
             _append_infeasible(workload, decisions)
             continue
 
-        # Phase 2 is still mission-aware: first maximize mission utility
-        # (service quality weighted by the current mission phase). Only when
-        # two actions provide the same utility do we use the orchestration
-        # score as the efficiency tie-breaker.
-        #
-        # This prevents the policy from selecting an unnecessarily degraded
-        # service merely because it has a lower resource/latency cost.
-        best = max(
+        # Lexicographic key: mission utility first, then the operating
+        # score net of migration overhead (Eq. (20)).
+        best_candidate = max(
             candidates,
-            key=lambda x: (
-                calculate_utility(
-                    workload,
-                    x[1],
-                    system.mission.phase
-                ),
-                x[2]["score"]
-            )
+            key=lambda x: (x[2]["utility"], x[2]["score"]),
         )
-
-        _commit_decision(
-            workload,
-            best[0],
-            best[1],
-            best[2],
-            allocations,
-            decisions
-        )
+        _commit_decision(workload, best_candidate[0], best_candidate[1],
+                         best_candidate[2], allocations, decisions)
 
     return decisions

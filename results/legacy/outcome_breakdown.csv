@@ -1,0 +1,12 @@
+policy,deadline,host,infeasible,ok,resource,suspended
+Static,0.1,0.15,0.0,0.675,0.075,0.0
+QoS-Based,0.0,0.0,0.1,0.85,0.0,0.05
+Resource-Aware,0.0,0.0,0.1,0.85,0.0,0.05
+Utility-Based,0.0,0.0,0.1,0.85,0.0,0.05
+AMC-Adapted,0.0,0.0,0.1,0.775,0.0,0.125
+Elastic-MC,0.0,0.0,0.075,0.9,0.0,0.025
+MDP-Migration,0.0,0.0,0.1,0.85,0.0,0.05
+Proposed-v1,0.0,0.0,0.075,0.9,0.0,0.025
+Proposed,0.0,0.0,0.075,0.9,0.0,0.025
+RH-DP,0.0,0.0,0.075,0.9,0.0,0.025
+RH-DP-Oracle,0.0,0.0,0.075,0.9,0.0,0.025

@@ -1,0 +1,56 @@
+policy,workload,utility_mean,utility_ci95,share_ok,share_full,share_onboard,share_remote,share_suspended
+Static,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+Static,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+Static,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+Static,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+Static,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+QoS-Based,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+QoS-Based,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+QoS-Based,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+QoS-Based,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+QoS-Based,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+Resource-Aware,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+Resource-Aware,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+Resource-Aware,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+Resource-Aware,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+Resource-Aware,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+Utility-Based,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+Utility-Based,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+Utility-Based,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+Utility-Based,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+Utility-Based,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+AMC-Adapted,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+AMC-Adapted,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+AMC-Adapted,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+AMC-Adapted,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+AMC-Adapted,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+Elastic-MC,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+Elastic-MC,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+Elastic-MC,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+Elastic-MC,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+Elastic-MC,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+MDP-Migration,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+MDP-Migration,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+MDP-Migration,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+MDP-Migration,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+MDP-Migration,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+Proposed-v1,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+Proposed-v1,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+Proposed-v1,Weather Analysis,50.0,,1.0,0.0,1.0,0.0,0.0
+Proposed-v1,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+Proposed-v1,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+Proposed,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+Proposed,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+Proposed,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+Proposed,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+Proposed,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+RH-DP,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+RH-DP,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+RH-DP,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+RH-DP,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+RH-DP,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
+RH-DP-Oracle,Obstacle Detection,1000.0,,1.0,1.0,1.0,0.0,0.0
+RH-DP-Oracle,Navigation,1000.0,,1.0,1.0,1.0,0.0,0.0
+RH-DP-Oracle,Weather Analysis,200.0,,1.0,1.0,0.0,1.0,0.0
+RH-DP-Oracle,Video Analytics,400.0,,1.0,1.0,0.0,1.0,0.0
+RH-DP-Oracle,Flight Logging,100.0,,1.0,1.0,0.0,1.0,0.0
