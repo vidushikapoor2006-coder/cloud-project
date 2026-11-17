@@ -22,3 +22,6 @@ Thumbs.db
 
 # Generated experiment output
 *.log
+*.pem
+*.crt
+*.key
